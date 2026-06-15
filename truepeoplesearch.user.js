@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TruePeopleSearch 批量搜索
 // @namespace    tps
-// @version      2.4
+// @version      2.5
 // @updateURL    https://raw.githubusercontent.com/Aqu399/truepeoplesearch-tampermonkey/main/truepeoplesearch.user.js
 // @downloadURL  https://raw.githubusercontent.com/Aqu399/truepeoplesearch-tampermonkey/main/truepeoplesearch.user.js
 // @description  By.阿趣制作 · TruePeopleSearch 自动搜索
@@ -196,6 +196,7 @@
         <button id="tps-start">▶ 开始搜索</button>
         <button id="tps-stop" class="sec">■ 停止</button>
         <button id="tps-export" class="ok">📥 导出 CSV</button>
+        <button id="tps-cookie" class="sec">🍪 清Cookie</button>
         <button id="tps-clear" class="sec">🗑 清理</button>
       </div>
 
@@ -231,6 +232,11 @@
       console.log('[TPS] 已停止，已导出', results.length, '条数据');
     };
     document.getElementById('tps-export').onclick = exportCSV;
+    document.getElementById('tps-cookie').onclick = () => {
+      wipeTPSCookies();
+      setStatus('🍪 Cookie 已清理');
+      console.log('[TPS] 手动清理Cookie完成');
+    };
     document.getElementById('tps-clear').onclick = () => {
       if (!confirm('清空所有搜索结果队列？')) return;
       GM_deleteValue(NS + '_queue');
@@ -297,22 +303,26 @@
 
   // ── 清 TPS Cookie（清除会话级限速标记） ──
   function wipeTPSCookies() {
-    // 清掉 truepeoplesearch.com 域下的所有 cookie
+    // 杀掉 truepeoplesearch.com 域下所有 cookie
+    const domain = location.hostname;
     document.cookie.split(';').forEach(c => {
       const name = c.split('=')[0].trim();
-      // 保留必要的会话cookie防止页面崩，清掉追踪类的
-      const kill = ['ez', '__utm', '_ga', '_gid', '_fbp', 'cf_', '__cf', 'session', 'visitor', 'track'];
-      for (const k of kill) {
-        if (name.toLowerCase().includes(k)) {
-          document.cookie = name + '=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/; domain=.truepeoplesearch.com';
-          document.cookie = name + '=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/';
-          break;
-        }
-      }
+      if (!name) return;
+      // 多路径多域名清法
+      const paths = ['/', '/results', '/find'];
+      const domains = [domain, '.' + domain, 'www.' + domain];
+      paths.forEach(p => {
+        domains.forEach(d => {
+          document.cookie = name + '=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=' + p + '; domain=' + d;
+        });
+      });
+      document.cookie = name + '=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/';
     });
-    // 清 localStorage（部分网站用这个追踪）
+    // 清 localStorage + sessionStorage
     try { localStorage.clear(); } catch(e) {}
-    console.log('[TPS] Cookie/LS 已清理');
+    try { sessionStorage.clear(); } catch(e) {}
+    // 清缓存（通过添加时间戳强制刷新）
+    console.log('[TPS] Cookie/LS/SS 全部清理完毕');
   }
 
   // 翻页计数器（GM存储持久化）
