@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TruePeopleSearch 批量搜索
 // @namespace    tps
-// @version      2.5
+// @version      2.6
 // @updateURL    https://raw.githubusercontent.com/Aqu399/truepeoplesearch-tampermonkey/main/truepeoplesearch.user.js
 // @downloadURL  https://raw.githubusercontent.com/Aqu399/truepeoplesearch-tampermonkey/main/truepeoplesearch.user.js
 // @description  By.阿趣制作 · TruePeopleSearch 自动搜索
@@ -196,9 +196,11 @@
         <button id="tps-start">▶ 开始搜索</button>
         <button id="tps-stop" class="sec">■ 停止</button>
         <button id="tps-export" class="ok">📥 导出 CSV</button>
+        <button id="tps-proxy" class="sec">🌐 获取代理</button>
         <button id="tps-cookie" class="sec">🍪 清Cookie</button>
         <button id="tps-clear" class="sec">🗑 清理</button>
       </div>
+      <div id="tps-proxy-list" style="margin-top:4px;max-height:120px;overflow-y:auto;display:none;"></div>
 
       <div class="status" id="tps-status">就绪</div>
       <div id="tps-results" style="margin-top:6px;"></div>
@@ -237,6 +239,7 @@
       setStatus('🍪 Cookie 已清理');
       console.log('[TPS] 手动清理Cookie完成');
     };
+    document.getElementById('tps-proxy').onclick = fetchFreeProxies;
     document.getElementById('tps-clear').onclick = () => {
       if (!confirm('清空所有搜索结果队列？')) return;
       GM_deleteValue(NS + '_queue');
@@ -323,6 +326,101 @@
     try { sessionStorage.clear(); } catch(e) {}
     // 清缓存（通过添加时间戳强制刷新）
     console.log('[TPS] Cookie/LS/SS 全部清理完毕');
+  }
+
+  // ── 爬免费美国代理 + 测试可用性 ──
+  async function fetchFreeProxies() {
+    setStatus('🌐 正在获取免费代理列表...');
+    const box = document.getElementById('tps-proxy-list');
+    box.innerHTML = '<div style="font-size:11px;color:#607d8b;">获取中...</div>';
+    box.style.display = 'block';
+
+    try {
+      // 从多个来源爬免费代理
+      const sources = [
+        'https://www.sslproxies.org/',
+        'https://www.us-proxy.org/',
+        'https://free-proxy-list.net/',
+      ];
+      const allProxies = [];
+
+      for (const src of sources) {
+        try {
+          const resp = await fetch(src);
+          const html = await resp.text();
+          const parser = new DOMParser();
+          const doc = parser.parseFromString(html, 'text/html');
+          const rows = doc.querySelectorAll('table.table tbody tr');
+
+          rows.forEach(row => {
+            const cells = row.querySelectorAll('td');
+            if (cells.length < 8) return;
+            const ip = cells[0]?.textContent?.trim();
+            const port = cells[1]?.textContent?.trim();
+            const code = cells[2]?.textContent?.trim();
+            const type = cells[6]?.textContent?.trim().toLowerCase();
+            // 只取美国 + HTTPS/elite
+            if (code === 'US' && ip && port && (type === 'elite proxy' || type === 'anonymous')) {
+              const proxy = `${ip}:${port}`;
+              if (!allProxies.includes(proxy)) allProxies.push(proxy);
+            }
+          });
+          console.log(`[TPS] ${src} → 找到 ${allProxies.length} 个美国代理`);
+        } catch (e) {
+          console.log('[TPS] 来源不可用:', src);
+        }
+      }
+
+      if (allProxies.length === 0) {
+        box.innerHTML = '<div style="font-size:11px;color:#e94560;">⚠️ 未获取到代理，手动输入试试</div>' +
+          '<textarea id="tps-manual-proxies" style="height:60px;font-size:11px;" placeholder="IP:PORT&#10;每行一个"></textarea>' +
+          '<button id="tps-test-proxies" style="font-size:11px;padding:3px 10px;">测试</button>';
+        setStatus('🌐 未获取到代理，可手动输入');
+        return;
+      }
+
+      // 随机取15个测试
+      const shuffled = allProxies.sort(() => Math.random() - 0.5).slice(0, 15);
+      setStatus(`🌐 正在测试 ${shuffled.length} 个代理...`);
+
+      // 测试可用性（尝试访问 TPS）
+      const working = [];
+      for (const proxy of shuffled) {
+        try {
+          const testUrl = `https://www.truepeoplesearch.com/`;
+          const controller = new AbortController();
+          const timeout = setTimeout(() => controller.abort(), 5000);
+          const resp = await fetch(testUrl, {
+            signal: controller.signal,
+            headers: { 'User-Agent': 'Mozilla/5.0' },
+          });
+          clearTimeout(timeout);
+          if (resp.status === 200 || resp.status === 403) {
+            working.push(proxy);
+          }
+        } catch (e) {
+          // 代理不可用
+        }
+      }
+
+      // 显示结果
+      if (working.length > 0) {
+        let html = '<div style="font-size:11px;color:#2d6a4f;margin-bottom:4px;">✅ 可用代理 ' + working.length + ' 个：</div>';
+        working.forEach(p => {
+          html += '<div style="font-size:10px;color:#37474f;padding:2px 4px;background:rgba(255,255,255,0.5);border-radius:3px;margin:1px 0;cursor:pointer;" onclick="navigator.clipboard.writeText(\'' + p + '\');setStatus(\'📋 已复制: ' + p + '\');">🌐 ' + p + ' <span style="float:right;font-size:9px;color:#90a4ae;">点击复制</span></div>';
+        });
+        box.innerHTML = html;
+        setStatus(`🌐 找到 ${working.length} 个可用美国代理，点击复制到 SwitchyOmega`);
+      } else {
+        box.innerHTML = '<div style="font-size:11px;color:#e94560;">⚠️ 测试无可用代理</div>';
+        setStatus('🌐 未找到可用代理');
+      }
+
+    } catch (e) {
+      console.log('[TPS] 获取代理失败:', e);
+      box.innerHTML = '<div style="font-size:11px;color:#e94560;">⚠️ 获取失败: ' + e.message + '</div>';
+      setStatus('🌐 获取代理失败');
+    }
   }
 
   // 翻页计数器（GM存储持久化）
