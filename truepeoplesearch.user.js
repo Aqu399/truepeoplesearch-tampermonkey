@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TruePeopleSearch 批量搜索
 // @namespace    tps
-// @version      1.4
+// @version      1.5
 // @updateURL    https://raw.githubusercontent.com/Aqu399/truepeoplesearch-tampermonkey/main/truepeoplesearch.user.js
 // @downloadURL  https://raw.githubusercontent.com/Aqu399/truepeoplesearch-tampermonkey/main/truepeoplesearch.user.js
 // @description  By.阿趣制作 · TruePeopleSearch 自动搜索
@@ -257,6 +257,12 @@
   async function startSearch() {
     window.__tps_stop = false;
 
+    // ── 保存年龄配置到 CFG（供 resumeIfNeeded 使用） ──
+    const ageMinEl = document.getElementById('tps-age-min');
+    const ageMaxEl = document.getElementById('tps-age-max');
+    CFG._ageMin = ageMinEl?.value || '';
+    CFG._ageMax = ageMaxEl?.value || '';
+
     const raw = document.getElementById('tps-input').value.trim();
     if (!raw) { setStatus('请先输入搜索列表'); return; }
 
@@ -272,13 +278,17 @@
     saveQueue(queries);
     setStatus(`队列 ${queries.length} 条，开始搜索...`);
 
-    // 如果在页面里但不是首页/搜索结果页，先回首页
-    if (!window.location.pathname.includes('/results') && window.location.pathname !== '/') {
-      window.location.href = 'https://www.truepeoplesearch.com/';
-      await sleep(2000);
+    // ── 保存队列到存储，跳转到第一个搜索URL ──
+    // 后续由页面加载时的 resumeIfNeeded() 自动恢复处理
+    const first = queries[0];
+    const params = new URLSearchParams();
+    params.set('name', first.name);
+    if (first.citystate) params.set('citystatezip', first.citystate);
+    if (CFG._ageMin || CFG._ageMax) {
+      params.set('agerange', `${CFG._ageMin || '0'}-${CFG._ageMax || '120'}`);
     }
-
-    await processQueue();
+    setStatus(`跳转到搜索页: ${first.name}`);
+    window.location.href = `https://www.truepeoplesearch.com/results?${params.toString()}`;
   }
 
   function parseQuery(line) {
@@ -294,98 +304,8 @@
   }
 
   async function processQueue() {
-    const queue = getQueue();
-    const total = queue.length;
-
-    let idx = 0;
-    for (const item of queue) {
-      if (window.__tps_stop) { setStatus('已停止'); return; }
-
-      const doneUrls = getDone();
-      if (doneUrls.includes(item.query)) {
-        idx++;
-        updateProgressBar(idx, total);
-        continue;
-      }
-
-      setStatus(`[${idx + 1}/${total}] 搜索: ${item.name}`);
-      updateProgressBar(idx + 1, total);
-
-      // ── 搜索跳转（含年龄筛选） ──
-      const params = new URLSearchParams();
-      params.set('name', item.name);
-      if (item.citystate) params.set('citystatezip', item.citystate);
-      // 年龄范围
-      const ageMin = document.getElementById('tps-age-min')?.value;
-      const ageMax = document.getElementById('tps-age-max')?.value;
-      if (ageMin || ageMax) {
-        const min = ageMin || '0';
-        const max = ageMax || '120';
-        params.set('agerange', `${min}-${max}`);
-        console.log('[TPS] 年龄筛选:', `${min}-${max}`);
-      }
-      const searchUrl = `https://www.truepeoplesearch.com/results?${params.toString()}`;
-
-      window.location.href = searchUrl;
-      await sleep(CFG.delay_ms + 2000);
-
-      // Cloudflare 检测
-      if (document.body.textContent.includes('Attention Required') ||
-          document.body.textContent.includes('Sorry, you have been blocked')) {
-        setStatus('⚠️ Cloudflare 拦截，手动验证后刷新页面继续');
-        return;
-      }
-
-      dismissConsent();
-
-      const personLinks = findPersonLinks();
-      if (personLinks.length === 0) {
-        setStatus(`[${idx + 1}] 未找到结果: ${item.name}`);
-        console.log('[TPS] 结果页HTML片段:', document.body.innerHTML.substring(0, 2000));
-        const done2 = getDone();
-        done2.push(item.query);
-        saveDone(done2);
-        renderResults();
-        idx++;
-        updateProgressBar(idx, total);
-        continue;
-      }
-
-      // ── 跳转详情页（直接通过 detail-link href 跳转） ──
-      const link = personLinks[0];
-      setStatus(`[${idx + 1}] 打开详情: ${item.name}`);
-      console.log('[TPS] 跳转到:', link);
-      window.location.href = link;
-      await sleep(CFG.detail_delay_ms + 2000);
-
-      dismissConsent();
-
-      // ── 提取 ──
-      const onlyWireless = document.getElementById('tps-only-wireless').checked;
-      const data = extractDetailPage(item.name, onlyWireless);
-      if (data) {
-        const results = getResults();
-        results.push(data);
-        saveResults(results);
-      }
-
-      const done3 = getDone();
-      done3.push(item.query);
-      saveDone(done3);
-      renderResults();
-
-      idx++;
-      updateProgressBar(idx, total);
-    }
-
-    setStatus('✅ 搜索完成！');
-
-    // ── 自动下载 ──
-    if (CFG.auto_download) {
-      await sleep(800);
-      exportCSV();
-      setStatus('✅ 搜索完成，已自动下载');
-    }
+    // 已不再使用 - 由 resumeIfNeeded 在页面加载时自动处理
+    console.log('[TPS] processQueue 废弃, 使用 resumeIfNeeded');
   }
 
   function dismissConsent() {
@@ -619,12 +539,160 @@
     return s;
   }
 
-  // ────────────────────────── 初始化 ────────────────────────
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', createUI);
-  } else {
-    createUI();
+  // ────────────────────────── 页面级自动恢复 ──────────────
+  // 当页面跳转（搜索页→详情页→搜索页...），每次页面加载时自动检查并恢复
+  async function resumeIfNeeded() {
+    const queue = getQueue();
+    const done = getDone();
+    if (queue.length === 0) return;
+
+    // 检查是否所有条目都已完成
+    const allDone = queue.every(item => done.includes(item.query));
+    if (allDone) {
+      console.log('[TPS] 队列全部完成');
+      // 如果有自动下载
+      if (CFG.auto_download) {
+        const results = getResults();
+        if (results.length > 0) {
+          await sleep(500);
+          exportCSV();
+        }
+      }
+      return;
+    }
+
+    const path = window.location.pathname;
+    console.log('[TPS] 恢复检查, 当前路径:', path, '队列:', queue.length, '已完成:', done.length);
+
+    // ── 情况1: 在详情页 (/find/person/xxx) → 提取数据 ──
+    if (path.includes('/find/person/')) {
+      console.log('[TPS] 在详情页, 提取数据');
+      await sleep(1500);
+      dismissConsent();
+      await sleep(500);
+
+      const onlyWireless = document.getElementById('tps-only-wireless')?.checked ?? true;
+      // 找到当前 query（匹配当前姓名或在队列中找一个未完成的）
+      let currentItem = null;
+      for (const item of queue) {
+        if (!done.includes(item.query)) {
+          currentItem = item;
+          break;
+        }
+      }
+
+      if (currentItem) {
+        const data = extractDetailPage(currentItem.name, onlyWireless);
+        if (data) {
+          const results = getResults();
+          results.push(data);
+          saveResults(results);
+          console.log('[TPS] 提取成功:', data);
+        }
+        const newDone = getDone();
+        newDone.push(currentItem.query);
+        saveDone(newDone);
+      }
+
+      renderResults();
+      await sleep(800);
+
+      // 跳转到下一个未完成的搜索
+      let nextItem = null;
+      for (const item of queue) {
+        if (!getDone().includes(item.query)) {
+          nextItem = item;
+          break;
+        }
+      }
+
+      if (nextItem) {
+        const params = new URLSearchParams();
+        params.set('name', nextItem.name);
+        if (nextItem.citystate) params.set('citystatezip', nextItem.citystate);
+        const ageMin = CFG._ageMin || '';
+        const ageMax = CFG._ageMax || '';
+        if (ageMin || ageMax) {
+          params.set('agerange', `${ageMin || '0'}-${ageMax || '120'}`);
+        }
+        console.log('[TPS] 下一个:', nextItem.name);
+        window.location.href = `https://www.truepeoplesearch.com/results?${params.toString()}`;
+      } else {
+        console.log('[TPS] 全部完成!');
+        setStatus('✅ 搜索完成！');
+        updateProgressBar(queue.length, queue.length);
+        if (CFG.auto_download) {
+          const results = getResults();
+          if (results.length > 0) {
+            await sleep(800);
+            exportCSV();
+          }
+        }
+      }
+      return;
+    }
+
+    // ── 情况2: 在搜索结果页 (/results) → 找 View Details 并跳转 ──
+    if (path.includes('/results') || path === '/') {
+      console.log('[TPS] 在搜索结果页, 找View Details');
+      await sleep(2000);
+      dismissConsent();
+      await sleep(500);
+
+      // 找当前未完成的条目
+      let currentItem = null;
+      for (const item of queue) {
+        if (!getDone().includes(item.query)) {
+          currentItem = item;
+          break;
+        }
+      }
+      if (!currentItem) return;
+
+      const pLinks = findPersonLinks();
+      if (pLinks.length > 0) {
+        console.log('[TPS] 跳转到详情:', pLinks[0]);
+        window.location.href = pLinks[0];
+      } else {
+        console.log('[TPS] 未找到 View Details，跳过:', currentItem.name);
+        const nd = getDone();
+        nd.push(currentItem.query);
+        saveDone(nd);
+        renderResults();
+        // 继续下一个
+        let nextItem = null;
+        for (const item of queue) {
+          if (!getDone().includes(item.query)) {
+            nextItem = item;
+            break;
+          }
+        }
+        if (nextItem) {
+          const params = new URLSearchParams();
+          params.set('name', nextItem.name);
+          if (nextItem.citystate) params.set('citystatezip', nextItem.citystate);
+          const ageMin = CFG._ageMin || '';
+          const ageMax = CFG._ageMax || '';
+          if (ageMin || ageMax) {
+            params.set('agerange', `${ageMin || '0'}-${ageMax || '120'}`);
+          }
+          window.location.href = `https://www.truepeoplesearch.com/results?${params.toString()}`;
+        }
+      }
+      return;
+    }
   }
 
-  console.log('[TPS] v1.1 ready | WM:', WATERMARK.source);
+  // ────────────────────────── 初始化 ────────────────────────
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', () => {
+      createUI();
+      resumeIfNeeded();
+    });
+  } else {
+    createUI();
+    resumeIfNeeded();
+  }
+
+  console.log('[TPS] v1.4 ready | WM:', WATERMARK.source);
 })();
