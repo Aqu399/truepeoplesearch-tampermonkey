@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TruePeopleSearch 批量搜索
 // @namespace    tps
-// @version      1.9
+// @version      2.0
 // @updateURL    https://raw.githubusercontent.com/Aqu399/truepeoplesearch-tampermonkey/main/truepeoplesearch.user.js
 // @downloadURL  https://raw.githubusercontent.com/Aqu399/truepeoplesearch-tampermonkey/main/truepeoplesearch.user.js
 // @description  By.阿趣制作 · TruePeopleSearch 自动搜索
@@ -209,17 +209,22 @@
     document.getElementById('tps-start').onclick = startSearch;
     document.getElementById('tps-stop').onclick = () => {
       window.__tps_stop = true;
-      // 清空所有存储，确保下次页面加载不会恢复
+      // 先导出已收集的数据
+      const results = getResults();
+      if (results.length > 0) {
+        exportCSV();
+      }
+      // 再清空所有存储
       GM_deleteValue(NS + '_queue');
       GM_deleteValue(NS + '_detail_urls');
       GM_deleteValue(NS + '_detail_done');
       GM_deleteValue(NS + '_results_url');
+      GM_deleteValue(NS + '_batch_name');
       GM_deleteValue(NS + '_results');
       GM_deleteValue(NS + '_done_urls');
-      GM_deleteValue(NS + '_batch_name');
       document.getElementById('tps-results') && (document.getElementById('tps-results').innerHTML = '');
-      setStatus('⏹ 已停止，已清空所有数据');
-      console.log('[TPS] 已停止并清空全部存储');
+      setStatus('⏹ 已停止，已导出 ' + results.length + ' 条');
+      console.log('[TPS] 已停止，已导出', results.length, '条数据');
     };
     document.getElementById('tps-export').onclick = exportCSV;
     document.getElementById('tps-clear').onclick = () => {
