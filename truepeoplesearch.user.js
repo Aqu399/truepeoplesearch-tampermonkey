@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TruePeopleSearch 批量搜索
 // @namespace    tps
-// @version      1.2
+// @version      1.3
 // @updateURL    https://raw.githubusercontent.com/Aqu399/truepeoplesearch-tampermonkey/main/truepeoplesearch.user.js
 // @downloadURL  https://raw.githubusercontent.com/Aqu399/truepeoplesearch-tampermonkey/main/truepeoplesearch.user.js
 // @description  By.阿趣制作 · TruePeopleSearch 自动搜索
@@ -320,7 +320,7 @@
       dismissConsent();
 
       const personLinks = findPersonLinks();
-      if (personLinks.length === 0 && !window.__tps_view_btn) {
+      if (personLinks.length === 0) {
         setStatus(`[${idx + 1}] 未找到结果: ${item.name}`);
         console.log('[TPS] 结果页HTML片段:', document.body.innerHTML.substring(0, 2000));
         const done2 = getDone();
@@ -332,26 +332,12 @@
         continue;
       }
 
-      // ── 打开详情（链接跳转 或 按钮点击） ──
-      if (window.__tps_view_btn) {
-        // 按钮点击方式
-        setStatus(`[${idx + 1}] 点击View Details: ${item.name}`);
-        console.log('[TPS] 点击View Details按钮');
-        try {
-          window.__tps_view_btn.click();
-          await sleep(CFG.detail_delay_ms + 2000);
-        } catch(e) {
-          console.log('[TPS] 按钮点击失败:', e);
-        }
-        window.__tps_view_btn = null;
-      } else {
-        // 链接跳转方式
-        const link = personLinks[0];
-        setStatus(`[${idx + 1}] 打开详情: ${item.name}`);
-        console.log('[TPS] 跳转到:', link);
-        window.location.href = link;
-        await sleep(CFG.detail_delay_ms + 2000);
-      }
+      // ── 跳转详情页（直接通过 detail-link href 跳转） ──
+      const link = personLinks[0];
+      setStatus(`[${idx + 1}] 打开详情: ${item.name}`);
+      console.log('[TPS] 跳转到:', link);
+      window.location.href = link;
+      await sleep(CFG.detail_delay_ms + 2000);
 
       dismissConsent();
 
@@ -394,76 +380,44 @@
   }
 
   function findPersonLinks() {
-    const links = [];
-    const btns = []; // 无href的按钮, 用click()触发
+    // View Details 按钮结构（实际测试确认）:
+    // <a class="btn btn-success btn-lg detail-link shadow-form"
+    //    href="/find/person/p6uu4ru9u4r4946402un"
+    //    aria-label="View All Details">View Details ...</a>
 
-    // ── 策略1: 找包含 "View Details" 文字的任意元素 ──
-    document.querySelectorAll('a, button, span, div').forEach(el => {
-      const text = el.textContent.trim().toLowerCase();
-      if (text === 'view details' || text.startsWith('view details')) {
-        const a = el.tagName === 'A' ? el : el.querySelector('a');
-        if (a && a.href && !links.includes(a.href)) {
-          links.push(a.href);
-          console.log('[TPS] View Details link:', a.href);
-        } else if (el.tagName === 'BUTTON' || el.tagName === 'A') {
-          // 按钮或空链接 → 记录用 click 触发
-          const href = el.href || el.getAttribute('data-href') || el.getAttribute('onclick');
-          if (href && href !== '#' && !href.startsWith('javascript')) {
-            if (!links.includes(href)) links.push(href);
-          } else {
-            if (!btns.includes(el)) btns.push(el);
-          }
-        }
+    const links = [];
+
+    // ── 方式1: 通过 detail-link class（最精确） ──
+    document.querySelectorAll('a.detail-link').forEach(a => {
+      const href = a.getAttribute('href');
+      if (href && !links.includes(href)) {
+        links.push(href.startsWith('http') ? href : location.origin + href);
+        console.log('[TPS] detail-link:', href);
       }
     });
 
-    // ── 策略2: 从爬虫源码结构定位 ──
-    if (links.length === 0 && btns.length === 0) {
-      // col-md-4.hidden-mobile.text-center.align-self-center > a
-      document.querySelectorAll('.col-md-4.hidden-mobile.text-center.align-self-center a').forEach(a => {
-        if (a.href && !links.includes(a.href)) {
-          links.push(a.href);
-          console.log('[TPS] struct link:', a.href);
+    // ── 方式2: 通过 /find/person/ 路径 ──
+    if (links.length === 0) {
+      document.querySelectorAll('a[href*="/find/person/"]').forEach(a => {
+        const href = a.getAttribute('href');
+        if (href && !links.includes(href)) {
+          links.push(href.startsWith('http') ? href : location.origin + href);
         }
       });
     }
 
-    // ── 策略3: /find/person/ 链接 ──
-    if (links.length === 0 && btns.length === 0) {
-      document.querySelectorAll('a[href*="/find/person/"], a[href*="/person/"]').forEach(a => {
-        if (a.href && !links.includes(a.href) && a.href !== window.location.href) {
-          links.push(a.href);
+    // ── 方式3: btn-success + View Details 文本 ──
+    if (links.length === 0) {
+      document.querySelectorAll('a.btn-success, a[class*="btn-success"]').forEach(a => {
+        const href = a.getAttribute('href');
+        if (href && href.includes('/find/person/') && !links.includes(href)) {
+          links.push(href.startsWith('http') ? href : location.origin + href);
         }
       });
     }
 
-    // ── 策略4: card-summary 里的所有链接 ──
-    if (links.length === 0 && btns.length === 0) {
-      document.querySelectorAll('.card-summary a, [class*="card"] a, [class*="result"] a').forEach(a => {
-        if (a.href && !links.includes(a.href) && !a.href.includes('#') && a.href !== window.location.href) {
-          links.push(a.href);
-        }
-      });
-    }
-
-    // ── 策略5: 所有包含 onclick 且含 person 的按钮 ──
-    if (links.length === 0 && btns.length === 0) {
-      document.querySelectorAll('[onclick*="person"], [onclick*="detail"], [onclick*="view"]').forEach(el => {
-        if (!btns.includes(el)) btns.push(el);
-      });
-    }
-
-    console.log('[TPS] 链接数:', links.length, '| 按钮数:', btns.length);
-    console.log('[TPS] links:', links);
-
-    // 如果有按钮无链接, 存到全局供 processQueue 使用
-    if (links.length === 0 && btns.length > 0) {
-      window.__tps_view_btn = btns[0];
-      console.log('[TPS] 使用按钮点击, onclick:', btns[0].getAttribute('onclick'));
-    } else {
-      window.__tps_view_btn = null;
-    }
-
+    window.__tps_view_btn = null;
+    console.log('[TPS] 找到', links.length, '个详情链接');
     return links.filter(l => l);
   }
 
