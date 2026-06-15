@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TruePeopleSearch 批量搜索
 // @namespace    tps
-// @version      2.2
+// @version      2.3
 // @updateURL    https://raw.githubusercontent.com/Aqu399/truepeoplesearch-tampermonkey/main/truepeoplesearch.user.js
 // @downloadURL  https://raw.githubusercontent.com/Aqu399/truepeoplesearch-tampermonkey/main/truepeoplesearch.user.js
 // @description  By.阿趣制作 · TruePeopleSearch 自动搜索
@@ -28,9 +28,12 @@
 
   // ────────────────────────── 配置 ──────────────────────────
   const CFG = {
-    delay_ms: 1500,
-    detail_delay_ms: 2000,
-    auto_download: true,   // 搜索完成后自动下载
+    delay_ms: 3000,         // 搜索页等待（拉大防限速）
+    detail_delay_ms: 4000,  // 详情页等待
+    page_delay_ms: 5000,    // 翻页后等待
+    max_pages_before_pause: 3,  // 每3页暂停一次
+    pause_seconds: 30,      // 暂停时长
+    auto_download: true,
   };
 
   // ────────────────────────── 存储 ──────────────────────────
@@ -222,6 +225,7 @@
       GM_deleteValue(NS + '_batch_name');
       GM_deleteValue(NS + '_results');
       GM_deleteValue(NS + '_done_urls');
+      GM_deleteValue(NS + '_page_count');
       document.getElementById('tps-results') && (document.getElementById('tps-results').innerHTML = '');
       setStatus('⏹ 已停止，已导出 ' + results.length + ' 条');
       console.log('[TPS] 已停止，已导出', results.length, '条数据');
@@ -233,6 +237,7 @@
       GM_deleteValue(NS + '_results');
       GM_deleteValue(NS + '_done_urls');
       GM_deleteValue(NS + '_batch_name');
+      GM_deleteValue(NS + '_page_count');
       renderResults();
       setStatus('已清空');
       updateProgressBar(0, 1);
@@ -284,6 +289,17 @@
     });
   }
 
+  // 随机延迟（ms范围内随机）
+  function randomSleep(minMs, maxMs) {
+    const ms = minMs + Math.floor(Math.random() * (maxMs - minMs));
+    return sleep(ms);
+  }
+
+  // 翻页计数器（GM存储持久化）
+  function getPageCount() { return parseInt(GM_getValue(NS + '_page_count', '0')) || 0; }
+  function incPageCount() { GM_setValue(NS + '_page_count', String(getPageCount() + 1)); }
+  function resetPageCount() { GM_deleteValue(NS + '_page_count'); }
+
   async function startSearch() {
     window.__tps_stop = false;
 
@@ -306,6 +322,7 @@
     CFG.auto_download = document.getElementById('tps-auto-download').checked;
 
     saveQueue(queries);
+    resetPageCount();  // 新搜索重置翻页计数
     // 保存搜索批次名用于CSV命名
     if (queries.length === 1) {
       setBatchName(queries[0].name.replace(/[^a-zA-Z0-9\u4e00-\u9fa5_-]/g, '_'));
@@ -644,9 +661,9 @@
     // ────────────────── 详情页 ──────────────────
     if (path.includes('/find/person/')) {
       console.log('[TPS] 详情页 → 提取');
-      await sleep(1500);
+      await randomSleep(3000, 5000);
       dismissConsent();
-      await sleep(500);
+      await randomSleep(1000, 2000);
 
       // 找到当前人名
       let currentItem = null;
@@ -682,13 +699,27 @@
 
     // ────────────────── 搜索结果页 ──────────────────
     if (path.includes('/results') || path.includes('/find/') || path === '/') {
-      console.log('[TPS] 搜索页 → 采集链接');
-      await sleep(2500);
+      // 限速保护：每N页后暂停
+      const pageCount = getPageCount();
+      if (pageCount > 0 && pageCount % CFG.max_pages_before_pause === 0) {
+        console.log(`[TPS] 已爬 ${pageCount} 页，暂停 ${CFG.pause_seconds}s 防限速...`);
+        setStatus(`⏳ 防限速暂停 ${CFG.pause_seconds}s...`);
+        await sleep(CFG.pause_seconds * 1000);
+        setStatus('继续...');
+      }
+      incPageCount();
+
+      console.log('[TPS] 搜索页 → 采集链接 (第' + (pageCount + 1) + '页)');
+      await randomSleep(3000, 5000);
       dismissConsent();
-      await sleep(500);
+      await randomSleep(1000, 2000);
 
       // 保存当前搜索结果页URL（供详情页提取后返回）
       setResultsUrl(window.location.href);
+      // 翻页后额外等待
+      if (pageCount > 0) {
+        await randomSleep(2000, 4000);
+      }
 
       // 获取当前页所有 View Details 链接
       const allLinks = findPersonLinks();
