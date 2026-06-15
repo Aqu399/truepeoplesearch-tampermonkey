@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TruePeopleSearch 批量搜索
 // @namespace    tps
-// @version      1.8
+// @version      1.9
 // @updateURL    https://raw.githubusercontent.com/Aqu399/truepeoplesearch-tampermonkey/main/truepeoplesearch.user.js
 // @downloadURL  https://raw.githubusercontent.com/Aqu399/truepeoplesearch-tampermonkey/main/truepeoplesearch.user.js
 // @description  By.阿趣制作 · TruePeopleSearch 自动搜索
@@ -60,6 +60,8 @@
   function saveDetailDone(d) { saveList(NS + '_detail_done', d); }
   function getResultsUrl()   { return getStr(NS + '_results_url'); }
   function setResultsUrl(u)  { setStr(NS + '_results_url', u); }
+  function getBatchName()    { return getStr(NS + '_batch_name'); }
+  function setBatchName(n)   { setStr(NS + '_batch_name', n); }
 
   // ────────────────────────── UI ────────────────────────────
   function createUI() {
@@ -214,6 +216,7 @@
       GM_deleteValue(NS + '_results_url');
       GM_deleteValue(NS + '_results');
       GM_deleteValue(NS + '_done_urls');
+      GM_deleteValue(NS + '_batch_name');
       document.getElementById('tps-results') && (document.getElementById('tps-results').innerHTML = '');
       setStatus('⏹ 已停止，已清空所有数据');
       console.log('[TPS] 已停止并清空全部存储');
@@ -224,6 +227,7 @@
       GM_deleteValue(NS + '_queue');
       GM_deleteValue(NS + '_results');
       GM_deleteValue(NS + '_done_urls');
+      GM_deleteValue(NS + '_batch_name');
       renderResults();
       setStatus('已清空');
       updateProgressBar(0, 1);
@@ -297,6 +301,12 @@
     CFG.auto_download = document.getElementById('tps-auto-download').checked;
 
     saveQueue(queries);
+    // 保存搜索批次名用于CSV命名
+    if (queries.length === 1) {
+      setBatchName(queries[0].name.replace(/[^a-zA-Z0-9\u4e00-\u9fa5_-]/g, '_'));
+    } else {
+      setBatchName(queries[0].name.split(' ')[0] + '_etc');
+    }
     setStatus(`队列 ${queries.length} 条，开始搜索...`);
 
     // ── 保存队列到存储，跳转到第一个搜索URL ──
@@ -545,7 +555,9 @@
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    const fn = 'truepeoplesearch_' + new Date().toISOString().slice(0, 10) + '.csv';
+    const batchName = getBatchName();
+    const nameTag = batchName ? batchName + '_' : '';
+    const fn = 'TPS_' + nameTag + new Date().toISOString().slice(0, 10) + '.csv';
     a.download = fn;
     document.body.appendChild(a);
     a.click();
