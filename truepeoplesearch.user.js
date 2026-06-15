@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TruePeopleSearch 批量搜索
 // @namespace    tps
-// @version      2.3
+// @version      2.4
 // @updateURL    https://raw.githubusercontent.com/Aqu399/truepeoplesearch-tampermonkey/main/truepeoplesearch.user.js
 // @downloadURL  https://raw.githubusercontent.com/Aqu399/truepeoplesearch-tampermonkey/main/truepeoplesearch.user.js
 // @description  By.阿趣制作 · TruePeopleSearch 自动搜索
@@ -295,6 +295,26 @@
     return sleep(ms);
   }
 
+  // ── 清 TPS Cookie（清除会话级限速标记） ──
+  function wipeTPSCookies() {
+    // 清掉 truepeoplesearch.com 域下的所有 cookie
+    document.cookie.split(';').forEach(c => {
+      const name = c.split('=')[0].trim();
+      // 保留必要的会话cookie防止页面崩，清掉追踪类的
+      const kill = ['ez', '__utm', '_ga', '_gid', '_fbp', 'cf_', '__cf', 'session', 'visitor', 'track'];
+      for (const k of kill) {
+        if (name.toLowerCase().includes(k)) {
+          document.cookie = name + '=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/; domain=.truepeoplesearch.com';
+          document.cookie = name + '=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/';
+          break;
+        }
+      }
+    });
+    // 清 localStorage（部分网站用这个追踪）
+    try { localStorage.clear(); } catch(e) {}
+    console.log('[TPS] Cookie/LS 已清理');
+  }
+
   // 翻页计数器（GM存储持久化）
   function getPageCount() { return parseInt(GM_getValue(NS + '_page_count', '0')) || 0; }
   function incPageCount() { GM_setValue(NS + '_page_count', String(getPageCount() + 1)); }
@@ -341,6 +361,7 @@
       params.set('agerange', `${CFG._ageMin || '0'}-${CFG._ageMax || '120'}`);
     }
     setStatus(`跳转到搜索页: ${first.name}`);
+    wipeTPSCookies();
     window.location.href = `https://www.truepeoplesearch.com/results?${params.toString()}`;
   }
 
@@ -693,7 +714,7 @@
 
       // 回搜索结果页继续
       const rUrl = getResultsUrl();
-      if (rUrl) { window.location.href = rUrl; return; }
+      if (rUrl) { wipeTPSCookies(); window.location.href = rUrl; return; }
       return;
     }
 
@@ -753,6 +774,7 @@
 
       if (nextDetail) {
         console.log('[TPS] 跳转详情:', nextDetail);
+        wipeTPSCookies();
         window.location.href = nextDetail;
         return;
       }
@@ -766,6 +788,7 @@
         saveDetailUrls([]);
         saveDetailDone([]);
         const fullUrl = nextHref.startsWith('http') ? nextHref : location.origin + nextHref;
+        wipeTPSCookies();
         window.location.href = fullUrl;
         return;
       }
@@ -801,6 +824,7 @@
         }
         const url = `https://www.truepeoplesearch.com/results?${params.toString()}`;
         setResultsUrl(url);
+        wipeTPSCookies();
         window.location.href = url;
         return;
       }
