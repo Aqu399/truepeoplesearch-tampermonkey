@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TruePeopleSearch 批量搜索
 // @namespace    tps
-// @version      2.1
+// @version      2.2
 // @updateURL    https://raw.githubusercontent.com/Aqu399/truepeoplesearch-tampermonkey/main/truepeoplesearch.user.js
 // @downloadURL  https://raw.githubusercontent.com/Aqu399/truepeoplesearch-tampermonkey/main/truepeoplesearch.user.js
 // @description  By.阿趣制作 · TruePeopleSearch 自动搜索
@@ -180,8 +180,8 @@
         </div>
       </div>
       <div style="margin:4px 0;">
-        <input type="checkbox" id="tps-only-wireless" checked>
-        <label for="tps-only-wireless">只提取 Wireless (手机号)</label>
+        <input type="checkbox" id="tps-only-wireless" checked disabled style="opacity:0.5;">
+        <label for="tps-only-wireless" style="opacity:0.5;">仅 Wireless (默认)</label>
         <br>
         <input type="checkbox" id="tps-auto-download" checked>
         <label for="tps-auto-download">完成后自动下载</label>
@@ -432,37 +432,52 @@
       console.log('[TPS] 找到 Phone Numbers 段落');
     }
 
-    // 在目标文本中搜 phone - Wireless
-    const phonePattern = /(\(\d{3}\)\s*\d{3}-\d{4})\s*-\s*(Wireless|Landline|Cell)/g;
+    // 提取所有电话（带类型 + 最后报告日期）
+    // 格式: (214) 349-3972 - Wireless / Last reported Jan 2025
+    const phonePattern = /(\(\d{3}\)\s*\d{3}-\d{4})\s*-\s*(Wireless|Landline|Cell)[\s\S]*?Last reported\s*(\w+\s*\d{4})/gi;
     let match;
     while ((match = phonePattern.exec(phoneSearchText)) !== null) {
-      const phone = match[1].trim();
+      const number = match[1].trim();
       const type = match[2];
-      if (onlyWireless && type !== 'Wireless') continue;
-      // 检查是否已存在（去重）
-      const exists = phones.some(p => p.number === phone);
-      if (!exists) phones.push({ number: phone, type: type });
-    }
-
-    // 如果只搜 Wireless 但没找到, 回退到所有电话
-    if (onlyWireless && phones.length === 0) {
-      phonePattern.lastIndex = 0;
-      while ((match = phonePattern.exec(phoneSearchText)) !== null) {
-        const phone = match[1].trim();
-        const type = match[2];
-        const exists = phones.some(p => p.number === phone);
-        if (!exists) phones.push({ number: phone, type: type });
+      const reported = match[3].trim(); // e.g. "Jan 2025"
+      // 只存 Wireless
+      if (type === 'Wireless') {
+        const exists = phones.some(p => p.number === number);
+        if (!exists) phones.push({ number, type, reported });
       }
     }
 
-    // 如果段落搜索没找到, 在全文中搜
+    // 如果段落搜不到Wireless, 回退到宽松匹配（段落外或没日期信息）
     if (phones.length === 0) {
       phonePattern.lastIndex = 0;
-      while ((match = phonePattern.exec(bodyText)) !== null) {
-        const phone = match[1].trim();
-        const type = match[2];
-        const exists = phones.some(p => p.number === phone);
-        if (!exists) phones.push({ number: phone, type: type });
+      const laxPattern = /(\(\d{3}\)\s*\d{3}-\d{4})\s*-\s*(Wireless|Landline|Cell)/g;
+      while ((match = laxPattern.exec(phoneSearchText)) !== null) {
+        if (match[2] === 'Wireless') {
+          const number = match[1].trim();
+          const exists = phones.some(p => p.number === number);
+          if (!exists) phones.push({ number, type: 'Wireless', reported: '' });
+        }
+      }
+    }
+
+    // 如果段落搜索没找到（可能页面结构不同）, 在全文中搜
+    if (phones.length === 0) {
+      const fullPattern = /(\(\d{3}\)\s*\d{3}-\d{4})\s*-\s*(Wireless)[\s\S]*?Last reported\s*(\w+\s*\d{4})/gi;
+      while ((match = fullPattern.exec(bodyText)) !== null) {
+        const number = match[1].trim();
+        const reported = match[3].trim();
+        const exists = phones.some(p => p.number === number);
+        if (!exists) phones.push({ number, type: 'Wireless', reported });
+      }
+    }
+
+    // 最终兜底: 全文搜所有 Wireless 号码
+    if (phones.length === 0) {
+      const fallbackPattern = /(\(\d{3}\)\s*\d{3}-\d{4})\s*-\s*Wireless/g;
+      while ((match = fallbackPattern.exec(bodyText)) !== null) {
+        const number = match[1].trim();
+        const exists = phones.some(p => p.number === number);
+        if (!exists) phones.push({ number, type: 'Wireless', reported: '' });
       }
     }
 
@@ -502,16 +517,18 @@
       }
     }
 
-    // 构造带类型的phone显示
-    const phoneStr = phones.map(p => p.type === 'Wireless' ? `📱${p.number}` : p.number).join(' / ');
+    // 只保留 Wireless
+    const wireless = phones.filter(p => p.type === 'Wireless');
+    const phoneStr = wireless.map(p => {
+      const year = p.reported ? p.reported.replace(/\w+\s*/,'') : '?';
+      return `📱${p.number}(${year})`;
+    }).join(' / ');
 
     const result = {
       name: verifiedName || name,
       address: address || '',
-      phone: phoneStr,                        // 显示用: 📱(214) 123-4567 / (972) 987-6543
-      phones: phones,                         // 数组: [{number, type}, ...]
-      wirelessPhones: phones.filter(p => p.type === 'Wireless').map(p => p.number),
-      otherPhones: phones.filter(p => p.type !== 'Wireless').map(p => p.number),
+      phone: phoneStr,                        // 显示: 📱(214)123-4567(2025)
+      wirelessPhones: wireless,               // [{number, type, reported}, ...]
       email: emails.join(' / '),
       emails: emails,
       url: window.location.href,
@@ -540,23 +557,21 @@
     csv += `# ─────────────────────────────────────\n`;
 
     // ── 列头 ──
-    csv += 'Name,Address,Wireless1,Wireless1_Type,Wireless2,Wireless2_Type,Wireless3,Wireless3_Type,OtherPhones,Email,URL,Timestamp,Source\n';
+    csv += 'Name,Address,Wireless_1,Year_1,Wireless_2,Year_2,Wireless_3,Year_3,Email,URL,Timestamp,Source\n';
 
     // ── 数据行 ──
     results.forEach(r => {
-      const wireless = r.wirelessPhones || [];
-      const other = r.otherPhones || [];
+      const w = r.wirelessPhones || []; // [{number, type, reported}, ...]
       const emails = r.emails || [];
       const row = [
         csvEsc(r.name),
         csvEsc(r.address),
-        csvEsc(wireless[0] || ''),
-        csvEsc(wireless[0] ? 'Wireless' : ''),
-        csvEsc(wireless[1] || ''),
-        csvEsc(wireless[1] ? 'Wireless' : ''),
-        csvEsc(wireless[2] || ''),
-        csvEsc(wireless[2] ? 'Wireless' : ''),
-        csvEsc(other.join(' / ')),
+        csvEsc(w[0]?.number || ''),
+        csvEsc(extractYear(w[0]?.reported)),
+        csvEsc(w[1]?.number || ''),
+        csvEsc(extractYear(w[1]?.reported)),
+        csvEsc(w[2]?.number || ''),
+        csvEsc(extractYear(w[2]?.reported)),
         csvEsc(r.email || ''),
         csvEsc(r.url || ''),
         csvEsc(r.timestamp || ''),
@@ -593,6 +608,13 @@
       return '"' + s.replace(/"/g, '""') + '"';
     }
     return s;
+  }
+
+  function extractYear(reported) {
+    // reported: "Jan 2025" → 提取 "2025"
+    if (!reported) return '';
+    const m = reported.match(/(\d{4})/);
+    return m ? m[1] : reported;
   }
 
   // ────────────────────────── 页面级自动恢复 ──────────────
