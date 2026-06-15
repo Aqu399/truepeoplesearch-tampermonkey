@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TruePeopleSearch 批量搜索
 // @namespace    tps
-// @version      1.3
+// @version      1.4
 // @updateURL    https://raw.githubusercontent.com/Aqu399/truepeoplesearch-tampermonkey/main/truepeoplesearch.user.js
 // @downloadURL  https://raw.githubusercontent.com/Aqu399/truepeoplesearch-tampermonkey/main/truepeoplesearch.user.js
 // @description  By.阿趣制作 · TruePeopleSearch 自动搜索
@@ -158,6 +158,16 @@
       <label>搜索列表 (每行一条)</label>
       <textarea id="tps-input" placeholder="John Smith, Dallas, TX&#10;Jane Doe, Austin, TX&#10;Bob Wilson, 123 Main St, Dallas, TX"></textarea>
 
+      <div style="margin:4px 0;display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
+        <div style="flex:1;min-width:70px;">
+          <label style="font-size:11px;color:#546e7a;">年龄筛选</label>
+          <div style="display:flex;gap:4px;align-items:center;">
+            <input type="number" id="tps-age-min" min="0" max="120" value="" placeholder="最小" style="width:60px;text-align:center;padding:4px;">
+            <span style="color:#546e7a;font-weight:bold;">—</span>
+            <input type="number" id="tps-age-max" min="0" max="120" value="" placeholder="最大" style="width:60px;text-align:center;padding:4px;">
+          </div>
+        </div>
+      </div>
       <div style="margin:4px 0;">
         <input type="checkbox" id="tps-only-wireless" checked>
         <label for="tps-only-wireless">只提取 Wireless (手机号)</label>
@@ -301,10 +311,19 @@
       setStatus(`[${idx + 1}/${total}] 搜索: ${item.name}`);
       updateProgressBar(idx + 1, total);
 
-      // ── 搜索跳转 ──
+      // ── 搜索跳转（含年龄筛选） ──
       const params = new URLSearchParams();
       params.set('name', item.name);
       if (item.citystate) params.set('citystatezip', item.citystate);
+      // 年龄范围
+      const ageMin = document.getElementById('tps-age-min')?.value;
+      const ageMax = document.getElementById('tps-age-max')?.value;
+      if (ageMin || ageMax) {
+        const min = ageMin || '0';
+        const max = ageMax || '120';
+        params.set('agerange', `${min}-${max}`);
+        console.log('[TPS] 年龄筛选:', `${min}-${max}`);
+      }
       const searchUrl = `https://www.truepeoplesearch.com/results?${params.toString()}`;
 
       window.location.href = searchUrl;
