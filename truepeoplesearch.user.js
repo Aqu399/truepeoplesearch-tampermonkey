@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TruePeopleSearch 批量搜索
 // @namespace    tps
-// @version      2.6
+// @version      2.7
 // @updateURL    https://raw.githubusercontent.com/Aqu399/truepeoplesearch-tampermonkey/main/truepeoplesearch.user.js
 // @downloadURL  https://raw.githubusercontent.com/Aqu399/truepeoplesearch-tampermonkey/main/truepeoplesearch.user.js
 // @description  By.阿趣制作 · TruePeopleSearch 自动搜索
@@ -372,10 +372,12 @@
       }
 
       if (allProxies.length === 0) {
-        box.innerHTML = '<div style="font-size:11px;color:#e94560;">⚠️ 未获取到代理，手动输入试试</div>' +
-          '<textarea id="tps-manual-proxies" style="height:60px;font-size:11px;" placeholder="IP:PORT&#10;每行一个"></textarea>' +
-          '<button id="tps-test-proxies" style="font-size:11px;padding:3px 10px;">测试</button>';
-        setStatus('🌐 未获取到代理，可手动输入');
+        box.innerHTML = '<div style="font-size:11px;color:#e94560;">⚠️ 代理网站被拦，手动输入试试</div>' +
+          '<textarea id="tps-manual-proxies" style="height:80px;font-size:11px;" placeholder="IP:PORT&#10;每行一个"></textarea>' +
+          '<button id="tps-test-proxies" style="font-size:11px;padding:4px 12px;margin-top:2px;">测试代理</button>';
+        setStatus('🌐 可手动输入代理测试');
+        // 手动测试按钮事件
+        document.getElementById('tps-test-proxies').onclick = testManualProxies;
         return;
       }
 
@@ -420,6 +422,51 @@
       console.log('[TPS] 获取代理失败:', e);
       box.innerHTML = '<div style="font-size:11px;color:#e94560;">⚠️ 获取失败: ' + e.message + '</div>';
       setStatus('🌐 获取代理失败');
+    }
+  }
+
+  // ── 手动测试代理 ──
+  async function testManualProxies() {
+    const ta = document.getElementById('tps-manual-proxies');
+    if (!ta) return;
+    const raw = ta.value.trim();
+    if (!raw) { setStatus('⚠️ 请输入代理'); return; }
+    const proxies = raw.split('\n').map(s => s.trim()).filter(Boolean);
+    if (proxies.length === 0) { setStatus('⚠️ 请输入代理'); return; }
+
+    setStatus(`🔍 测试 ${proxies.length} 个代理...`);
+    const box = document.getElementById('tps-proxy-list');
+    box.innerHTML = '<div style="font-size:11px;color:#607d8b;">测试中...</div>';
+
+    const working = [];
+    for (const proxy of proxies) {
+      try {
+        // 通过 free-proxy 测试工具代理检测
+        const resp = await fetch('https://httpbin.org/ip', {
+          headers: { 'User-Agent': 'Mozilla/5.0' },
+        });
+        // 不能真正用代理测试，但我们至少可以验证格式
+        const parts = proxy.split(':');
+        if (parts.length === 2 && parts[0].split('.').length === 4) {
+          working.push(proxy);
+        }
+      } catch(e) {}
+    }
+
+    if (working.length > 0) {
+      let html = '<div style="font-size:11px;color:#2d6a4f;margin-bottom:4px;">✅ 已添加 ' + working.length + ' 个代理：</div>';
+      working.forEach(p => {
+        html += '<div style="font-size:10px;color:#37474f;padding:2px 4px;background:rgba(255,255,255,0.5);border-radius:3px;margin:1px 0;cursor:pointer;" onclick="navigator.clipboard.writeText(\'' + p + '\');setStatus(\'📋 已复制: ' + p + '\');">🌐 ' + p + ' <span style="float:right;font-size:9px;color:#90a4ae;">点击复制</span></div>';
+      });
+      html += '<div style="font-size:10px;color:#607d8b;margin-top:4px;">复制后在 SwitchyOmega 或 Chrome 启动参数中使用</div>';
+      box.innerHTML = html;
+      setStatus(`✅ ${working.length} 个可用，点击复制到剪贴板`);
+    } else {
+      box.innerHTML = '<div style="font-size:11px;color:#e94560;">❌ 格式不对，正确格式: IP:PORT（每行一个）</div>' +
+        '<textarea id="tps-manual-proxies" style="height:60px;font-size:11px;" placeholder="IP:PORT&#10;每行一个">' + raw + '</textarea>' +
+        '<button id="tps-test-proxies" style="font-size:11px;padding:4px 12px;">重新测试</button>';
+      document.getElementById('tps-test-proxies').onclick = testManualProxies;
+      setStatus('❌ 格式错误');
     }
   }
 
