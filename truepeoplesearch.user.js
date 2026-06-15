@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TruePeopleSearch 批量搜索
 // @namespace    tps
-// @version      1.7
+// @version      1.8
 // @updateURL    https://raw.githubusercontent.com/Aqu399/truepeoplesearch-tampermonkey/main/truepeoplesearch.user.js
 // @downloadURL  https://raw.githubusercontent.com/Aqu399/truepeoplesearch-tampermonkey/main/truepeoplesearch.user.js
 // @description  By.阿趣制作 · TruePeopleSearch 自动搜索
@@ -212,8 +212,11 @@
       GM_deleteValue(NS + '_detail_urls');
       GM_deleteValue(NS + '_detail_done');
       GM_deleteValue(NS + '_results_url');
-      setStatus('⏹ 已停止');
-      console.log('[TPS] 已停止并清空队列');
+      GM_deleteValue(NS + '_results');
+      GM_deleteValue(NS + '_done_urls');
+      document.getElementById('tps-results') && (document.getElementById('tps-results').innerHTML = '');
+      setStatus('⏹ 已停止，已清空所有数据');
+      console.log('[TPS] 已停止并清空全部存储');
     };
     document.getElementById('tps-export').onclick = exportCSV;
     document.getElementById('tps-clear').onclick = () => {
@@ -496,9 +499,12 @@
   }
 
   // ────────────────────────── CSV 导出 + 水印 ──────────────
+  let _exporting = false;
   function exportCSV() {
+    if (_exporting) { console.log('[TPS] 导出中，跳过重复请求'); return; }
+    _exporting = true;
     const results = getResults();
-    if (results.length === 0) { setStatus('无数据可导出'); return; }
+    if (results.length === 0) { setStatus('无数据可导出'); _exporting = false; return; }
 
     // ── 水印头 ──
     let csv = '';
@@ -547,6 +553,7 @@
     URL.revokeObjectURL(url);
 
     setStatus(`✅ 已导出 ${results.length} 条 → ${fn}`);
+    _exporting = false;
   }
 
   function csvEsc(v) {
