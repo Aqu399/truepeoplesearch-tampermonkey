@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TruePeopleSearch 批量搜索
 // @namespace    tps
-// @version      1.6
+// @version      1.7
 // @updateURL    https://raw.githubusercontent.com/Aqu399/truepeoplesearch-tampermonkey/main/truepeoplesearch.user.js
 // @downloadURL  https://raw.githubusercontent.com/Aqu399/truepeoplesearch-tampermonkey/main/truepeoplesearch.user.js
 // @description  By.阿趣制作 · TruePeopleSearch 自动搜索
@@ -205,7 +205,16 @@
 
   function bindUI() {
     document.getElementById('tps-start').onclick = startSearch;
-    document.getElementById('tps-stop').onclick = () => { window.__tps_stop = true; setStatus('已停止'); };
+    document.getElementById('tps-stop').onclick = () => {
+      window.__tps_stop = true;
+      // 清空所有存储，确保下次页面加载不会恢复
+      GM_deleteValue(NS + '_queue');
+      GM_deleteValue(NS + '_detail_urls');
+      GM_deleteValue(NS + '_detail_done');
+      GM_deleteValue(NS + '_results_url');
+      setStatus('⏹ 已停止');
+      console.log('[TPS] 已停止并清空队列');
+    };
     document.getElementById('tps-export').onclick = exportCSV;
     document.getElementById('tps-clear').onclick = () => {
       if (!confirm('清空所有搜索结果队列？')) return;
