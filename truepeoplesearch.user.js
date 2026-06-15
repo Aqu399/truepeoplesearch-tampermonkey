@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TruePeopleSearch 批量搜索
 // @namespace    tps
-// @version      2.0
+// @version      2.1
 // @updateURL    https://raw.githubusercontent.com/Aqu399/truepeoplesearch-tampermonkey/main/truepeoplesearch.user.js
 // @downloadURL  https://raw.githubusercontent.com/Aqu399/truepeoplesearch-tampermonkey/main/truepeoplesearch.user.js
 // @description  By.阿趣制作 · TruePeopleSearch 自动搜索
@@ -439,7 +439,9 @@
       const phone = match[1].trim();
       const type = match[2];
       if (onlyWireless && type !== 'Wireless') continue;
-      if (!phones.includes(phone)) phones.push(phone);
+      // 检查是否已存在（去重）
+      const exists = phones.some(p => p.number === phone);
+      if (!exists) phones.push({ number: phone, type: type });
     }
 
     // 如果只搜 Wireless 但没找到, 回退到所有电话
@@ -447,7 +449,9 @@
       phonePattern.lastIndex = 0;
       while ((match = phonePattern.exec(phoneSearchText)) !== null) {
         const phone = match[1].trim();
-        if (!phones.includes(phone)) phones.push(phone);
+        const type = match[2];
+        const exists = phones.some(p => p.number === phone);
+        if (!exists) phones.push({ number: phone, type: type });
       }
     }
 
@@ -456,7 +460,9 @@
       phonePattern.lastIndex = 0;
       while ((match = phonePattern.exec(bodyText)) !== null) {
         const phone = match[1].trim();
-        if (!phones.includes(phone)) phones.push(phone);
+        const type = match[2];
+        const exists = phones.some(p => p.number === phone);
+        if (!exists) phones.push({ number: phone, type: type });
       }
     }
 
@@ -496,17 +502,22 @@
       }
     }
 
+    // 构造带类型的phone显示
+    const phoneStr = phones.map(p => p.type === 'Wireless' ? `📱${p.number}` : p.number).join(' / ');
+
     const result = {
       name: verifiedName || name,
       address: address || '',
-      phone: phones.join(' / '),
-      phones: phones,
+      phone: phoneStr,                        // 显示用: 📱(214) 123-4567 / (972) 987-6543
+      phones: phones,                         // 数组: [{number, type}, ...]
+      wirelessPhones: phones.filter(p => p.type === 'Wireless').map(p => p.number),
+      otherPhones: phones.filter(p => p.type !== 'Wireless').map(p => p.number),
       email: emails.join(' / '),
       emails: emails,
       url: window.location.href,
       timestamp: new Date().toISOString(),
-      _watermark: WATERMARK.source,       // ← 水印字段
-      _tool: WATERMARK.tool,              // ← 工具标记
+      _watermark: WATERMARK.source,
+      _tool: WATERMARK.tool,
     };
 
     console.log('[TPS] 提取结果:', result);
@@ -529,24 +540,27 @@
     csv += `# ─────────────────────────────────────\n`;
 
     // ── 列头 ──
-    csv += 'Name,Address,Phone,Phone2,Phone3,Email,Email2,Email3,URL,Timestamp,Source\n';
+    csv += 'Name,Address,Wireless1,Wireless1_Type,Wireless2,Wireless2_Type,Wireless3,Wireless3_Type,OtherPhones,Email,URL,Timestamp,Source\n';
 
     // ── 数据行 ──
     results.forEach(r => {
-      const phones = r.phones || [];
+      const wireless = r.wirelessPhones || [];
+      const other = r.otherPhones || [];
       const emails = r.emails || [];
       const row = [
         csvEsc(r.name),
         csvEsc(r.address),
-        csvEsc(phones[0] || ''),
-        csvEsc(phones[1] || ''),
-        csvEsc(phones[2] || ''),
-        csvEsc(emails[0] || ''),
-        csvEsc(emails[1] || ''),
-        csvEsc(emails[2] || ''),
+        csvEsc(wireless[0] || ''),
+        csvEsc(wireless[0] ? 'Wireless' : ''),
+        csvEsc(wireless[1] || ''),
+        csvEsc(wireless[1] ? 'Wireless' : ''),
+        csvEsc(wireless[2] || ''),
+        csvEsc(wireless[2] ? 'Wireless' : ''),
+        csvEsc(other.join(' / ')),
+        csvEsc(r.email || ''),
         csvEsc(r.url || ''),
         csvEsc(r.timestamp || ''),
-        csvEsc(r._watermark || WATERMARK.source),  // 每行都带水印
+        csvEsc(r._watermark || WATERMARK.source),
       ];
       csv += row.join(',') + '\n';
     });
