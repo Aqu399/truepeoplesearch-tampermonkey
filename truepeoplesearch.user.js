@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TruePeopleSearch 批量搜索
 // @namespace    tps
-// @version      1.1
+// @version      1.2
 // @updateURL    https://raw.githubusercontent.com/Aqu399/truepeoplesearch-tampermonkey/main/truepeoplesearch.user.js
 // @downloadURL  https://raw.githubusercontent.com/Aqu399/truepeoplesearch-tampermonkey/main/truepeoplesearch.user.js
 // @description  By.阿趣制作 · TruePeopleSearch 自动搜索
@@ -320,8 +320,9 @@
       dismissConsent();
 
       const personLinks = findPersonLinks();
-      if (personLinks.length === 0) {
+      if (personLinks.length === 0 && !window.__tps_view_btn) {
         setStatus(`[${idx + 1}] 未找到结果: ${item.name}`);
+        console.log('[TPS] 结果页HTML片段:', document.body.innerHTML.substring(0, 2000));
         const done2 = getDone();
         done2.push(item.query);
         saveDone(done2);
@@ -331,11 +332,26 @@
         continue;
       }
 
-      // ── 打开详情 ──
-      const link = personLinks[0];
-      setStatus(`[${idx + 1}] 打开详情: ${item.name}`);
-      window.location.href = link;
-      await sleep(CFG.detail_delay_ms + 2000);
+      // ── 打开详情（链接跳转 或 按钮点击） ──
+      if (window.__tps_view_btn) {
+        // 按钮点击方式
+        setStatus(`[${idx + 1}] 点击View Details: ${item.name}`);
+        console.log('[TPS] 点击View Details按钮');
+        try {
+          window.__tps_view_btn.click();
+          await sleep(CFG.detail_delay_ms + 2000);
+        } catch(e) {
+          console.log('[TPS] 按钮点击失败:', e);
+        }
+        window.__tps_view_btn = null;
+      } else {
+        // 链接跳转方式
+        const link = personLinks[0];
+        setStatus(`[${idx + 1}] 打开详情: ${item.name}`);
+        console.log('[TPS] 跳转到:', link);
+        window.location.href = link;
+        await sleep(CFG.detail_delay_ms + 2000);
+      }
 
       dismissConsent();
 
@@ -379,46 +395,135 @@
 
   function findPersonLinks() {
     const links = [];
-    document.querySelectorAll('.card-summary a').forEach(a => {
-      const href = a.href;
-      if (href && href.includes('/find/person/') && !links.includes(href)) links.push(href);
+    const btns = []; // 无href的按钮, 用click()触发
+
+    // ── 策略1: 找包含 "View Details" 文字的任意元素 ──
+    document.querySelectorAll('a, button, span, div').forEach(el => {
+      const text = el.textContent.trim().toLowerCase();
+      if (text === 'view details' || text.startsWith('view details')) {
+        const a = el.tagName === 'A' ? el : el.querySelector('a');
+        if (a && a.href && !links.includes(a.href)) {
+          links.push(a.href);
+          console.log('[TPS] View Details link:', a.href);
+        } else if (el.tagName === 'BUTTON' || el.tagName === 'A') {
+          // 按钮或空链接 → 记录用 click 触发
+          const href = el.href || el.getAttribute('data-href') || el.getAttribute('onclick');
+          if (href && href !== '#' && !href.startsWith('javascript')) {
+            if (!links.includes(href)) links.push(href);
+          } else {
+            if (!btns.includes(el)) btns.push(el);
+          }
+        }
+      }
     });
-    if (links.length === 0) {
-      document.querySelectorAll('a[href*="/find/person/"]').forEach(a => {
-        const href = a.href;
-        if (!links.includes(href)) links.push(href);
+
+    // ── 策略2: 从爬虫源码结构定位 ──
+    if (links.length === 0 && btns.length === 0) {
+      // col-md-4.hidden-mobile.text-center.align-self-center > a
+      document.querySelectorAll('.col-md-4.hidden-mobile.text-center.align-self-center a').forEach(a => {
+        if (a.href && !links.includes(a.href)) {
+          links.push(a.href);
+          console.log('[TPS] struct link:', a.href);
+        }
       });
     }
-    if (links.length === 0) {
-      document.querySelectorAll('a.btn, a[class*="detail"], a[class*="view"]').forEach(a => {
-        const href = a.href;
-        if (href && href.includes('/find/person/') && !links.includes(href)) links.push(href);
+
+    // ── 策略3: /find/person/ 链接 ──
+    if (links.length === 0 && btns.length === 0) {
+      document.querySelectorAll('a[href*="/find/person/"], a[href*="/person/"]').forEach(a => {
+        if (a.href && !links.includes(a.href) && a.href !== window.location.href) {
+          links.push(a.href);
+        }
       });
     }
+
+    // ── 策略4: card-summary 里的所有链接 ──
+    if (links.length === 0 && btns.length === 0) {
+      document.querySelectorAll('.card-summary a, [class*="card"] a, [class*="result"] a').forEach(a => {
+        if (a.href && !links.includes(a.href) && !a.href.includes('#') && a.href !== window.location.href) {
+          links.push(a.href);
+        }
+      });
+    }
+
+    // ── 策略5: 所有包含 onclick 且含 person 的按钮 ──
+    if (links.length === 0 && btns.length === 0) {
+      document.querySelectorAll('[onclick*="person"], [onclick*="detail"], [onclick*="view"]').forEach(el => {
+        if (!btns.includes(el)) btns.push(el);
+      });
+    }
+
+    console.log('[TPS] 链接数:', links.length, '| 按钮数:', btns.length);
+    console.log('[TPS] links:', links);
+
+    // 如果有按钮无链接, 存到全局供 processQueue 使用
+    if (links.length === 0 && btns.length > 0) {
+      window.__tps_view_btn = btns[0];
+      console.log('[TPS] 使用按钮点击, onclick:', btns[0].getAttribute('onclick'));
+    } else {
+      window.__tps_view_btn = null;
+    }
+
     return links.filter(l => l);
   }
 
   function extractDetailPage(name, onlyWireless) {
     const bodyText = document.body.innerText || document.body.textContent || '';
 
+    // ── 提取姓名 (cap.py 模式: 第一个逗号前的文本) ──
     let verifiedName = '';
     const nameMatch = bodyText.match(/^([^,\n]+),/m);
     if (nameMatch) verifiedName = nameMatch[1].trim();
 
+    // ── 提取地址 (cap.py 模式) ──
     let address = '';
-    const addrMatch = bodyText.match(/Current Address[\s\S]*?(?:\n\n)([^\n]+)/);
-    if (addrMatch) address = addrMatch[1].trim();
+    // 方式1: cap.py 使用的正则
+    const addrPattern = /Current Address[\s\S]*?This is the most recently reported address[\s\S]*?\n\n([^\n]+)/i;
+    const addrMatch = bodyText.match(addrPattern);
+    if (addrMatch) {
+      address = addrMatch[1].trim();
+      // 清理多余信息
+      address = address.replace(/\$.*/, '').trim();
+    }
+    // 方式2: 备用
+    if (!address) {
+      const altMatch = bodyText.match(/Current Address[\s\S]*?(?:\n\n)([^\n]+)/);
+      if (altMatch) address = altMatch[1].trim();
+    }
 
+    // ── 提取电话 (cap.py 模式: 按段落分区搜索) ──
     const phones = [];
+
+    // 方式1: 先找 "Phone Numbers" 段落, 只在段落内搜 Wireless
+    const phoneSectionPattern = /Phone Numbers[\s\S]*?Includes the current and past phone numbers[\s\S]*?([\s\S]*?)(?=\s*Email Addresses|\s*Background Report|$)/i;
+    const phoneSectionMatch = bodyText.match(phoneSectionPattern);
+    let phoneSearchText = bodyText;
+    if (phoneSectionMatch) {
+      phoneSearchText = phoneSectionMatch[1]; // 只搜 Phone Numbers 段落的内容
+      console.log('[TPS] 找到 Phone Numbers 段落');
+    }
+
+    // 在目标文本中搜 phone - Wireless
     const phonePattern = /(\(\d{3}\)\s*\d{3}-\d{4})\s*-\s*(Wireless|Landline|Cell)/g;
     let match;
-    while ((match = phonePattern.exec(bodyText)) !== null) {
+    while ((match = phonePattern.exec(phoneSearchText)) !== null) {
       const phone = match[1].trim();
       const type = match[2];
       if (onlyWireless && type !== 'Wireless') continue;
       if (!phones.includes(phone)) phones.push(phone);
     }
+
+    // 如果只搜 Wireless 但没找到, 回退到所有电话
     if (onlyWireless && phones.length === 0) {
+      phonePattern.lastIndex = 0;
+      while ((match = phonePattern.exec(phoneSearchText)) !== null) {
+        const phone = match[1].trim();
+        if (!phones.includes(phone)) phones.push(phone);
+      }
+    }
+
+    // 如果段落搜索没找到, 在全文中搜
+    if (phones.length === 0) {
       phonePattern.lastIndex = 0;
       while ((match = phonePattern.exec(bodyText)) !== null) {
         const phone = match[1].trim();
@@ -426,15 +531,39 @@
       }
     }
 
+    // ── 提取邮箱 (cap.py 模式: 按段落分区搜索) ──
     const emails = [];
+
+    // 方式1: 先找 "Email Addresses" 段落
+    const emailSectionPattern = /Email Addresses[\s\S]*?Includes all known email addresses[\s\S]*?([\s\S]*?)(?=\s*Current Address Property Details|$)/i;
+    const emailSectionMatch = bodyText.match(emailSectionPattern);
+    let emailSearchText = bodyText;
+    if (emailSectionMatch) {
+      emailSearchText = emailSectionMatch[1];
+      console.log('[TPS] 找到 Email Addresses 段落');
+    }
+
     const emailPattern = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g;
     let emailMatch;
     const seen = new Set();
-    while ((emailMatch = emailPattern.exec(bodyText)) !== null) {
+    while ((emailMatch = emailPattern.exec(emailSearchText)) !== null) {
       const e = emailMatch[0].toLowerCase();
       if (!seen.has(e) && !e.includes('truepeoplesearch') && !e.endsWith('.png') && !e.endsWith('.jpg')) {
         seen.add(e);
         emails.push(e);
+      }
+    }
+
+    // 如果段落搜索没找到, 回退到全文
+    if (emails.length === 0) {
+      seen.clear();
+      emailPattern.lastIndex = 0;
+      while ((emailMatch = emailPattern.exec(bodyText)) !== null) {
+        const e = emailMatch[0].toLowerCase();
+        if (!seen.has(e) && !e.includes('truepeoplesearch') && !e.endsWith('.png') && !e.endsWith('.jpg')) {
+          seen.add(e);
+          emails.push(e);
+        }
       }
     }
 
