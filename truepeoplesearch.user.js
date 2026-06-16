@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TruePeopleSearch 批量搜索
 // @namespace    tps
-// @version      2.7
+// @version      2.8
 // @updateURL    https://raw.githubusercontent.com/Aqu399/truepeoplesearch-tampermonkey/main/truepeoplesearch.user.js
 // @downloadURL  https://raw.githubusercontent.com/Aqu399/truepeoplesearch-tampermonkey/main/truepeoplesearch.user.js
 // @description  By.阿趣制作 · TruePeopleSearch 自动搜索
@@ -555,10 +555,13 @@
 
     const links = [];
 
-    // ── 方式1: 通过 detail-link class（最精确） ──
+    // ── 方式1: 通过 detail-link class（排除 /send/ 广告链接） ──
     document.querySelectorAll('a.detail-link').forEach(a => {
       const href = a.getAttribute('href');
-      if (href && !links.includes(href)) {
+      // 过滤掉广告/API链接: /send/ /results/ 和外部链接
+      if (href && !links.includes(href) &&
+          href.includes('/find/person/') &&
+          !href.includes('/send?')) {
         links.push(href.startsWith('http') ? href : location.origin + href);
         console.log('[TPS] detail-link:', href);
       }
